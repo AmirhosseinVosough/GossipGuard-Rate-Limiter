@@ -6,8 +6,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.mappings.permissions import ROLE_PERMISSIONS
-from app.models.enums import Permission
-from app.models.enums import Role
+from app.models.enums import Permission, Role
 from app.models.user import User
 from app.services.auth_service import AuthService
 
@@ -95,20 +94,3 @@ def require_permissions(*required_permissions: Permission) -> Callable[[User], U
         return user
 
     return dependency
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
