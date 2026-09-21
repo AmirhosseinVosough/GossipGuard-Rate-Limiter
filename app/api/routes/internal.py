@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import hashlib
-import hmac
 import ipaddress
-import json
 import socket
 from functools import lru_cache
 from time import time
@@ -13,6 +10,7 @@ from fastapi import APIRouter, Request, HTTPException, Depends
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.security import require_permissions
+from app.core.signing import verify_signature
 from app.models.enums import Permission
 from app.models.user import User
 
@@ -26,7 +24,7 @@ class GossipEnvelope(BaseModel):
     snapshot: dict[str, dict[str, dict[str, float | int]]] = Field(default_factory=dict)
     signature: str  # HMAC-SHA256 signature
 
-    @field_validator('timestamp')
+    @field_validator("timestamp")
     @classmethod
     def validate_timestamp(cls, v: float) -> float:
         now = time()
@@ -35,32 +33,6 @@ class GossipEnvelope(BaseModel):
             raise ValueError(f"Timestamp too far from now: {v} (diff: {time_diff}s)")
         return v
 
-
-def compute_signature(node_id: str, timestamp: float, version: int, snapshot: dict, secret_key: str) -> str:
-    message = json.dumps({
-        "node_id": node_id,
-        "timestamp": timestamp,
-        "version": version,
-        "snapshot": snapshot,
-    }, sort_keys=True)
-    
-    signature = hmac.new(
-        secret_key.encode(),
-        message.encode(),
-        hashlib.sha256
-    ).hexdigest()
-    return signature
-
-
-def verify_signature(payload: GossipEnvelope, secret_key: str) -> bool:
-    expected_signature = compute_signature(
-        payload.node_id,
-        payload.timestamp,
-        payload.version,
-        payload.snapshot,
-        secret_key
-    )
-    return hmac.compare_digest(payload.signature, expected_signature)
 
 @router.get("/state")
 async def state(
@@ -128,14 +100,20 @@ async def sync(payload: GossipEnvelope, request: Request) -> dict[str, str]:
     gossip_service = request.app.state.gossip_service
     settings = request.app.state.settings
     secret_key = settings.gossip_secret_key
-    
-    # Verify signature
-    if not verify_signature(payload, secret_key):
+
+    if not verify_signature(
+        payload.node_id,
+        payload.timestamp,
+        payload.version,
+        payload.snapshot,
+        payload.signature,
+        secret_key,
+    ):
         raise HTTPException(status_code=403, detail="Invalid signature")
-    
+
     if not verify_source_ip(request, settings.peer_urls):
         raise HTTPException(status_code=403, detail="Unauthorized node")
-    
+
     source_node_id = payload.node_id
     received_at = payload.timestamp
 
