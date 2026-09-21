@@ -47,7 +47,6 @@ class DistributedRateLimitRepository:
     async def merge_snapshot(
         self,
         snapshot: Mapping[str, Mapping[str, Mapping[str, float | int]]],
-        source_node_id: str | None = None,
         received_at: float | None = None,
         now: float | None = None,
     ) -> None:
@@ -78,9 +77,6 @@ class DistributedRateLimitRepository:
                     elif incoming_updated_at == current_slot.updated_at and incoming_count > current_slot.count:
                         current_slot.count = incoming_count
                         current_slot.expires_at = incoming_expires_at
-
-    def node_count(self) -> int:
-        return 1
 
     async def janitor(self, now: float | None = None) -> None:
         current_time = time() if now is None else now

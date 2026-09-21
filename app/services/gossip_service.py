@@ -8,8 +8,8 @@ from time import time
 import httpx
 
 from app.core.config import Settings
+from app.core.signing import compute_signature
 from app.repositories.rate_limit_repository import DistributedRateLimitRepository
-from app.api.routes.internal import compute_signature
 
 
 class GossipService:
@@ -39,9 +39,6 @@ class GossipService:
         self._task = None
         self._janitor_task = None
 
-    async def ingest_snapshot(self, snapshot: dict[str, dict[str, dict[str, float | int]]]) -> None:
-        raise TypeError("ingest_snapshot now requires source metadata")
-
     async def ingest_envelope(
         self,
         source_node_id: str,
@@ -53,7 +50,7 @@ class GossipService:
             "received_at": received_at,
             "version": 1,
         }
-        await self.repository.merge_snapshot(snapshot, source_node_id=source_node_id, received_at=received_at)
+        await self.repository.merge_snapshot(snapshot, received_at=received_at)
 
     async def local_snapshot(self) -> dict[str, dict[str, dict[str, float | int]]]:
         return await self.repository.snapshot()
