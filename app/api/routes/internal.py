@@ -3,12 +3,12 @@ from __future__ import annotations
 import ipaddress
 import socket
 from functools import lru_cache
-from time import time
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Request, HTTPException, Depends
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
+from app.core.replay_guard import is_fresh
 from app.core.security import require_permissions
 from app.core.signing import verify_signature
 from app.models.enums import Permission
@@ -23,15 +23,6 @@ class GossipEnvelope(BaseModel):
     version: int = 1
     snapshot: dict[str, dict[str, dict[str, float | int]]] = Field(default_factory=dict)
     signature: str  # HMAC-SHA256 signature
-
-    @field_validator("timestamp")
-    @classmethod
-    def validate_timestamp(cls, v: float) -> float:
-        now = time()
-        time_diff = abs(v - now)
-        if time_diff > 3600:  # 1 hour in seconds
-            raise ValueError(f"Timestamp too far from now: {v} (diff: {time_diff}s)")
-        return v
 
 
 @router.get("/state")
@@ -113,6 +104,12 @@ async def sync(payload: GossipEnvelope, request: Request) -> dict[str, str]:
 
     if not verify_source_ip(request, settings.peer_urls):
         raise HTTPException(status_code=403, detail="Unauthorized node")
+
+    if not is_fresh(payload.timestamp, settings.gossip_max_skew_seconds):
+        raise HTTPException(status_code=403, detail="Envelope outside the accepted time window")
+
+    if not await request.app.state.replay_guard.accept(payload.signature):
+        raise HTTPException(status_code=403, detail="Envelope already processed")
 
     source_node_id = payload.node_id
     received_at = payload.timestamp

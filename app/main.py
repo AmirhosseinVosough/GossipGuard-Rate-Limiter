@@ -14,6 +14,7 @@ from app.api.routes.protected import router as protected_router
 from app.core.auth import hash_password
 from app.core.client_ip import parse_trusted_proxies
 from app.core.config import Settings
+from app.core.replay_guard import ReplayGuard
 from app.models.enums import Role
 from app.models.user import User
 from app.middleware.rate_limit_middleware import RateLimitMiddleware
@@ -85,6 +86,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.auth_service = auth_service
     app.state.rate_limit_service = rate_limit_service
     app.state.gossip_service = gossip_service
+    app.state.replay_guard = ReplayGuard(resolved_settings.gossip_max_skew_seconds)
 
     app.add_middleware(
         RateLimitMiddleware,

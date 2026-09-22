@@ -48,6 +48,7 @@ class Settings:
     admin_limit: int = 120
     gossip_interval_seconds: float = 0.5
     gossip_fanout: int = 2
+    gossip_max_skew_seconds: float = 60.0
     gossip_secret_key: str = ""
     jwt_secret_key: str = ""
     jwt_algorithm: str = "HS256"
@@ -86,6 +87,7 @@ class Settings:
             admin_limit=int(getenv("ADMIN_LIMIT", "120")),
             gossip_interval_seconds=float(getenv("GOSSIP_INTERVAL_SECONDS", "0.5")),
             gossip_fanout=int(getenv("GOSSIP_FANOUT", "2")),
+            gossip_max_skew_seconds=float(getenv("GOSSIP_MAX_SKEW_SECONDS", "60")),
             gossip_secret_key=getenv("GOSSIP_SECRET_KEY", ""),
             jwt_secret_key=getenv("JWT_SECRET_KEY", ""),
             jwt_algorithm=getenv("JWT_ALGORITHM", "HS256"),

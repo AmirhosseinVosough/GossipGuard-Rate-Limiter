@@ -34,7 +34,7 @@ Three boundaries matter:
 
 | Asset | Why it matters |
 |---|---|
-| Rate limit counters | The product. Corrupting them lets a client exceed limits or locks a legitimate client out. |
+| Rate limit counters | The product. Corrupting them  elets a clientxceed limits or locks a legitimate client out. |
 | `GOSSIP_SECRET_KEY` | Holding it lets an attacker write arbitrary counter state to every node. |
 | `JWT_SECRET_KEY` | Holding it lets an attacker mint tokens for any user, including admins. |
 | Password hashes | In memory only, but recovery would expose credentials reused elsewhere. |
@@ -80,19 +80,36 @@ node's state. There is no per peer key and no rotation path.
 
 ### T2. Replay of captured gossip
 
-Envelopes are accepted within one hour of their timestamp
-(`app/api/routes/internal.py:29`), so a captured message can be resent inside
-that window.
+An attacker positioned on the network can capture a signed envelope and resend
+it. The signature still verifies, because nothing about the message changed.
 
-**Why the impact is low.** The merge only overwrites a slot when the incoming
-`updated_at` is strictly newer, or equal with a higher count. Replaying an old
-envelope loses to the current state and changes nothing. The merge is effectively
-idempotent, which is a property of the CRDT design rather than a deliberate
-anti replay control.
+**Controls.** Three layers, in the order the route applies them.
 
-**Residual risk.** A replay captured and resent within milliseconds, before the
-victim node advances its own slot, can still land. The effect is bounded by one
-gossip interval of counter drift.
+The merge rule defeats most replays on its own. A slot is only overwritten when
+the incoming `updated_at` is strictly newer, or equal with a higher count, so a
+stale envelope loses to current state and changes nothing. This falls out of the
+CRDT design rather than being a deliberate control, but it is the reason replay
+was never critical here.
+
+Freshness is checked explicitly against `GOSSIP_MAX_SKEW_SECONDS`, sixty seconds
+by default (`app/core/replay_guard.py`). This replaced a hardcoded one hour
+tolerance, which was far too wide for a protocol that gossips every half second,
+and which also reported the server's clock offset in its error message.
+
+Every accepted signature is then remembered for exactly the freshness window
+(`ReplayGuard`). A second copy of the same envelope is refused outright. Entries
+expire with the window, since anything older is already rejected on freshness, so
+the cache is bounded by the number of envelopes genuinely received in sixty
+seconds rather than growing without limit.
+
+Order matters: the signature is verified before the cache is consulted, so an
+unauthenticated attacker cannot fill it with junk entries.
+
+**Residual risk.** Correctness now depends on clock synchronisation between
+peers. Nodes whose clocks drift more than sixty seconds apart will refuse each
+other's gossip, which is an availability failure rather than a security one, but
+it is a new operational requirement. Tightening the window further without NTP
+in place will cause false rejections.
 
 ### T3. Rate limit evasion across nodes
 
@@ -113,20 +130,16 @@ and the absent network hop, and this is the price.
 ### T4. Credential attacks
 
 **Controls.** bcrypt at cost factor 12 (`app/core/auth.py:13`) makes offline
-cracking expensive. Login errors are identical for an unknown username and a
-wrong password. `/auth/token` is rate limited at the anonymous tier, ten attempts
-per minute per IP by default.
+cracking expensive. Login errors are identical for an unknown username and a wrong
+password. `/auth/token` is rate limited at the anonymous tier, ten attempts per
+minute per IP by default.
 
-Authentication also spends the same time on both failure paths. A missing account
-is compared against a throwaway hash (`app/services/auth_service.py:18`) so the
-response takes one bcrypt comparison either way. Before this, a lookup miss
-returned in microseconds while a real username cost roughly 350 milliseconds, a
-difference large enough to enumerate valid accounts remotely and then aim a
-password spray at only those.
-
-**Residual risk.** There is no account lockout and no failed attempt logging. The
-throttle is keyed on client IP, so an attempt spread thinly across many source
-addresses is not slowed by it.
+**Residual risk.** Two real gaps. First, a username enumeration oracle:
+`authenticate_user` short circuits when the user does not exist
+(`app/services/auth_service.py:16`), so bcrypt never runs and the response returns
+measurably faster than for a valid username. Second, the throttle is keyed on
+client IP, so a distributed attempt across many source addresses is not slowed.
+There is no account lockout and no failed attempt logging.
 
 ### T5. Token handling
 
@@ -177,32 +190,16 @@ cleartext, and a network observer can map traffic patterns per user.
 **Requirement.** Deploy the gossip mesh on a private network, or terminate TLS
 between peers. The application does not enforce this.
 
-### T9. Client identity behind a reverse proxy
+### T9. Proxy deployment breaks client identity
 
-When a node sits behind a load balancer, the socket address belongs to the proxy
-rather than the client. Reading it directly would place every client into one
-shared bucket, so a single noisy caller would throttle everyone.
+The rate limiter reads `request.client.host` directly and ignores
+`X-Forwarded-For` (`app/middleware/rate_limit_middleware.py:20`). Behind a load
+balancer or reverse proxy every request appears to come from the proxy.
 
-The obvious fix, reading `X-Forwarded-For`, is worse than the problem if applied
-naively. The header is attacker controlled, so a client that sets it freely mints
-a new counter bucket on every request and the limiter stops working altogether.
-
-**Controls.** The header is honoured only when the immediate peer is itself a
-configured proxy. `TRUSTED_PROXIES` accepts addresses or CIDR ranges, and
-`resolve_client_ip` (`app/core/client_ip.py`) walks the forwarded chain from right
-to left, discarding trusted hops and returning the first address that is not one
-of them. Anything a client prepended sits further left and is never reached.
-Entries that fail to parse stop the walk rather than being skipped, so a malformed
-chain falls back to the proxy address instead of trusting whatever follows it.
-
-The setting defaults to empty, which means the header is ignored entirely and the
-socket address is used. A node is therefore secure before it is configured, and
-the operator opts in once the deployment actually has a proxy in front of it.
-
-**Residual risk.** Correctness depends on the operator listing the right ranges.
-Trusting too broad a range, for example the whole of `0.0.0.0/0`, restores the
-spoofing problem. Only `X-Forwarded-For` is read; `Forwarded` and
-`X-Real-IP` are ignored.
+**Impact.** Anonymous clients collapse into a single shared bucket, so one noisy
+client throttles everyone, and authenticated clients are keyed on a constant
+prefix. Any real deployment needs a trusted proxy header configuration before this
+control means anything.
 
 ### T10. Stale peer address cache
 
@@ -240,10 +237,16 @@ if nodes restart frequently.
 |---|---|---|
 | Over admission during convergence | Medium | Known, fix identified, not implemented |
 | Single shared gossip secret, no rotation | Medium | Accepted for current scope |
-| Trusted proxy ranges must be configured correctly | Low | Handled, opt in via `TRUSTED_PROXIES` |
-| No account lockout or failed attempt logging | Low | Not addressed |
+| Peer clocks must stay within the skew window | Low | New operational requirement |
+| No `X-Forwarded-For` handling | Medium | Blocks correct proxy deployment |
+| Username enumeration by response timing | Low | Not addressed |
 | No token revocation | Low | Accepted, mitigated by short expiry |
 | Token in `localStorage` | Low | Accepted for a demo dashboard |
 | Unescaped peer URLs in the dashboard | Low | Latent, not currently reachable |
 | No request size limit on gossip sync | Low | Not addressed |
 | Peer address cache never expires | Low | Not addressed |
+
+
+
+
+
