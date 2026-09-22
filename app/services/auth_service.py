@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from app.core.auth import _create_access_token, verify_password, decode_access_token
+from app.core.auth import (
+    ABSENT_USER_PASSWORD_HASH,
+    _create_access_token,
+    decode_access_token,
+    verify_password,
+)
 from app.core.config import Settings
 from app.repositories.auth_repository import AuthRepository
 from app.models.user import User
@@ -13,7 +18,10 @@ class AuthService:
 
     def authenticate_user(self, username: str, password: str) -> User | None:
         entry = self.repository.get_user(username)
-        if entry is None or not verify_password(password, entry.hashed_password):
+        if entry is None:
+            verify_password(password, ABSENT_USER_PASSWORD_HASH)
+            return None
+        if not verify_password(password, entry.hashed_password):
             return None
         return entry.user
 

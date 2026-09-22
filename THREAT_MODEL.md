@@ -113,16 +113,20 @@ and the absent network hop, and this is the price.
 ### T4. Credential attacks
 
 **Controls.** bcrypt at cost factor 12 (`app/core/auth.py:13`) makes offline
-cracking expensive. Login errors are identical for an unknown username and a wrong
-password. `/auth/token` is rate limited at the anonymous tier, ten attempts per
-minute per IP by default.
+cracking expensive. Login errors are identical for an unknown username and a
+wrong password. `/auth/token` is rate limited at the anonymous tier, ten attempts
+per minute per IP by default.
 
-**Residual risk.** Two real gaps. First, a username enumeration oracle:
-`authenticate_user` short circuits when the user does not exist
-(`app/services/auth_service.py:16`), so bcrypt never runs and the response returns
-measurably faster than for a valid username. Second, the throttle is keyed on
-client IP, so a distributed attempt across many source addresses is not slowed.
-There is no account lockout and no failed attempt logging.
+Authentication also spends the same time on both failure paths. A missing account
+is compared against a throwaway hash (`app/services/auth_service.py:18`) so the
+response takes one bcrypt comparison either way. Before this, a lookup miss
+returned in microseconds while a real username cost roughly 350 milliseconds, a
+difference large enough to enumerate valid accounts remotely and then aim a
+password spray at only those.
+
+**Residual risk.** There is no account lockout and no failed attempt logging. The
+throttle is keyed on client IP, so an attempt spread thinly across many source
+addresses is not slowed by it.
 
 ### T5. Token handling
 
@@ -237,7 +241,7 @@ if nodes restart frequently.
 | Over admission during convergence | Medium | Known, fix identified, not implemented |
 | Single shared gossip secret, no rotation | Medium | Accepted for current scope |
 | Trusted proxy ranges must be configured correctly | Low | Handled, opt in via `TRUSTED_PROXIES` |
-| Username enumeration by response timing | Low | Not addressed |
+| No account lockout or failed attempt logging | Low | Not addressed |
 | No token revocation | Low | Accepted, mitigated by short expiry |
 | Token in `localStorage` | Low | Accepted for a demo dashboard |
 | Unescaped peer URLs in the dashboard | Low | Latent, not currently reachable |

@@ -19,6 +19,12 @@ def verify_password(password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(password.encode("utf-8"), hashed_password.encode("utf-8"))
 
 
+# Compared against when no account matches, so a failed lookup costs the same
+# time as a failed password. Without it, response latency reveals which
+# usernames exist.
+ABSENT_USER_PASSWORD_HASH = hash_password("absent-user-timing-equaliser")
+
+
 def _create_access_token(subject: str, settings: Settings) -> tuple[str, datetime]:
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_expire_minutes)
     payload = {
