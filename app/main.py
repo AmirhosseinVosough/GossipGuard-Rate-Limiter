@@ -12,6 +12,7 @@ from app.api.routes.health import router as health_router
 from app.api.routes.internal import router as internal_router
 from app.api.routes.protected import router as protected_router
 from app.core.auth import hash_password
+from app.core.client_ip import parse_trusted_proxies
 from app.core.config import Settings
 from app.models.enums import Role
 from app.models.user import User
@@ -85,7 +86,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.rate_limit_service = rate_limit_service
     app.state.gossip_service = gossip_service
 
-    app.add_middleware(RateLimitMiddleware, service=rate_limit_service)
+    app.add_middleware(
+        RateLimitMiddleware,
+        service=rate_limit_service,
+        trusted_proxies=parse_trusted_proxies(resolved_settings.trusted_proxies),
+    )
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(protected_router)

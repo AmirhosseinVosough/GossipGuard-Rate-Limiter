@@ -4,20 +4,26 @@ from fastapi import HTTPException, Request, status
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse, Response
 
+from app.core.client_ip import TrustedNetworks, resolve_client_ip
 from app.core.security import get_current_user_from_request
 from app.services.rate_limit_service import RateLimitService
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, service: RateLimitService) -> None:
+    def __init__(self, app, service: RateLimitService, trusted_proxies: TrustedNetworks = ()) -> None:
         super().__init__(app)
         self.service = service
+        self.trusted_proxies = trusted_proxies
 
     async def dispatch(self, request: Request, call_next) -> Response:
         if request.url.path.startswith("/internal/"):
             return await call_next(request)
 
-        client_ip = request.client.host if request.client else "unknown"
+        client_ip = resolve_client_ip(
+            request.client.host if request.client else None,
+            request.headers.get("x-forwarded-for"),
+            self.trusted_proxies,
+        )
 
         user = get_current_user_from_request(request)
 

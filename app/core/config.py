@@ -40,6 +40,7 @@ class Settings:
     app_name: str = "GossipGuard Rate Limiter"
     node_id: str = field(default_factory=gethostname)
     peer_urls: tuple[str, ...] = field(default_factory=tuple)
+    trusted_proxies: tuple[str, ...] = field(default_factory=tuple)
     rate_limit_window_seconds: int = 60
     anonymous_limit: int = 10
     viewer_limit: int = 30
@@ -77,6 +78,7 @@ class Settings:
         return cls(
             node_id=getenv("NODE_ID", gethostname()),
             peer_urls=_split_csv(getenv("PEER_URLS", "")),
+            trusted_proxies=_split_csv(getenv("TRUSTED_PROXIES", "")),
             rate_limit_window_seconds=int(getenv("RATE_LIMIT_WINDOW_SECONDS", "60")),
             anonymous_limit=int(getenv("ANONYMOUS_LIMIT", "10")),
             viewer_limit=int(getenv("VIEWER_LIMIT", "30")),
