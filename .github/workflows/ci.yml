@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[test]"
+
+      - name: Run tests
+        env:
+          GOSSIP_SECRET_KEY: ci-gossip-secret-key-that-is-long-enough
+          JWT_SECRET_KEY: ci-jwt-secret-key-that-is-long-enough
+        run: pytest -q

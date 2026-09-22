@@ -1,0 +1,48 @@
+# Three nodes of the same image. The only difference between them is NODE_ID
+# and the peer list, both supplied here rather than baked into the source.
+x-node: &node
+  build: .
+  environment: &node-env
+    GOSSIP_SECRET_KEY: local-development-gossip-secret-change-me
+    JWT_SECRET_KEY: local-development-jwt-secret-change-me
+    GOSSIP_INTERVAL_SECONDS: "0.5"
+    GOSSIP_MAX_SKEW_SECONDS: "60"
+    RATE_LIMIT_WINDOW_SECONDS: "60"
+    ANONYMOUS_LIMIT: "10"
+    ENABLE_DEMO_USERS: "true"
+    ADMIN_USERNAME: admin
+    ADMIN_PASSWORD: admin123
+    VIEWER_USERNAME: viewer
+    VIEWER_PASSWORD: viewer123
+  restart: unless-stopped
+
+services:
+  node-a:
+    <<: *node
+    container_name: gossipguard-node-a
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *node-env
+      NODE_ID: node-a
+      PEER_URLS: http://node-b:8000,http://node-c:8000
+
+  node-b:
+    <<: *node
+    container_name: gossipguard-node-b
+    ports:
+      - "8001:8000"
+    environment:
+      <<: *node-env
+      NODE_ID: node-b
+      PEER_URLS: http://node-a:8000,http://node-c:8000
+
+  node-c:
+    <<: *node
+    container_name: gossipguard-node-c
+    ports:
+      - "8002:8000"
+    environment:
+      <<: *node-env
+      NODE_ID: node-c
+      PEER_URLS: http://node-a:8000,http://node-b:8000
