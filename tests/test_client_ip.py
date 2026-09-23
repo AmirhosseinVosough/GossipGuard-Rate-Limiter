@@ -132,3 +132,13 @@ def test_trusted_proxy_still_throttles_a_single_client() -> None:
     ]
 
     assert 429 in statuses
+
+
+def test_health_checks_are_never_throttled() -> None:
+    """Docker polls /health every five seconds, which alone exceeds the anonymous limit."""
+    app = create_app(_app_settings())
+    client = TestClient(app, client=("127.0.0.1", 50000))
+
+    statuses = [client.get("/health").status_code for _ in range(20)]
+
+    assert statuses == [200] * 20

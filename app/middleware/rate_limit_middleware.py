@@ -16,7 +16,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.trusted_proxies = trusted_proxies
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        if request.url.path.startswith("/internal/"):
+        # Gossip must never be throttled, or a busy cluster would stop converging.
+        # Health checks neither: the orchestrator polls /health on a fixed timer,
+        # so under the anonymous limit a node would be marked unhealthy for good.
+        if request.url.path.startswith("/internal/") or request.url.path == "/health":
             return await call_next(request)
 
         client_ip = resolve_client_ip(
