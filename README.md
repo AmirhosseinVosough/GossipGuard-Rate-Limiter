@@ -196,7 +196,7 @@ tests/               pytest suite
 pytest
 ```
 
-40 tests covering the merge rule, permission enforcement, JWT handling,
+47 tests covering the merge rule, permission enforcement, JWT handling,
 signature and replay rejection, proxy header trust, and the login timing
 equalisation. Time-dependent logic takes an injectable clock, so expiry and
 convergence are tested deterministically rather than with sleeps.

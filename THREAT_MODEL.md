@@ -231,11 +231,20 @@ trusting something as broad as `0.0.0.0/0` restores the spoofing problem. Only
 
 ### T10. Stale peer address cache
 
-`_resolve_peer_ips` is memoised with `lru_cache` and never expires
-(`app/api/routes/internal.py:84`). A peer whose address changes is refused until
-the process restarts. If resolution happens once while DNS is compromised, the
-attacker's address is trusted for the lifetime of the process. This is primarily
-an availability problem, since the signature check still has to pass.
+Peer hostnames are resolved once and the answer reused, so a peer whose address
+changes would be refused until the process restarted, and an address resolved
+during a moment of DNS compromise would be trusted for the life of the process.
+
+**Controls.** Resolution now expires (`app/api/routes/internal.py`). A complete
+answer is held for thirty seconds. An incomplete one, meaning at least one peer
+did not resolve, is held for one second only, so a cluster whose members start at
+different times converges quickly rather than caching a partial peer list for the
+full interval. Completeness is judged per peer, not by counting addresses, so a
+peer with several addresses cannot mask one that has none.
+
+**Residual risk.** A changed address is still refused for up to thirty seconds,
+and DNS compromise during a refresh is trusted for the same period. The signature
+check remains the real control; this is defence in depth and an availability fix.
 
 ## Deliberate design choices
 
@@ -272,7 +281,6 @@ if nodes restart frequently.
 | Token in `localStorage` | Low | Accepted for a demo dashboard |
 | Unescaped peer URLs in the dashboard | Low | Latent, not currently reachable |
 | No request size limit on gossip sync | Low | Not addressed |
-| Peer address cache never expires | Low | Not addressed |
 
 
 

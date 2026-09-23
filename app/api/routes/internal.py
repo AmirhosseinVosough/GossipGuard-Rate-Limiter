@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
-from functools import lru_cache
+from time import time
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Request, HTTPException, Depends
@@ -44,9 +44,36 @@ def _normalize_ip(value: str) -> str | None:
         return None
 
 
-@lru_cache(maxsize=32)
-def _resolve_peer_ips(peer_urls: tuple[str, ...]) -> frozenset[str]:
+# Resolution is cached, but never permanently: a peer that changes address, or
+# one that had not started yet when we first looked, must eventually be seen.
+# An incomplete answer is held only briefly so startup converges quickly.
+PEER_DNS_TTL_SECONDS = 30.0
+PEER_DNS_RETRY_SECONDS = 1.0
+
+_peer_ip_cache: dict[tuple[str, ...], tuple[float, frozenset[str]]] = {}
+
+
+def _resolve_peer_ips(peer_urls: tuple[str, ...], now: float | None = None) -> frozenset[str]:
+    current_time = time() if now is None else now
+    cached = _peer_ip_cache.get(peer_urls)
+    if cached is not None and cached[0] > current_time:
+        return cached[1]
+
+    resolved, complete = _resolve_peer_ips_uncached(peer_urls)
+    ttl = PEER_DNS_TTL_SECONDS if complete else PEER_DNS_RETRY_SECONDS
+    _peer_ip_cache[peer_urls] = (current_time + ttl, resolved)
+    return resolved
+
+
+def _resolve_peer_ips_uncached(peer_urls: tuple[str, ...]) -> tuple[frozenset[str], bool]:
+    """Return every address the peers resolve to, and whether each peer resolved.
+
+    Completeness is tracked per peer, not by counting addresses: one peer can
+    resolve to several addresses, which would otherwise hide a peer that
+    resolved to none.
+    """
     resolved_ips: set[str] = set()
+    complete = True
     for peer_url in peer_urls:
         hostname = urlparse(peer_url).hostname
         if not hostname:
@@ -60,16 +87,19 @@ def _resolve_peer_ips(peer_urls: tuple[str, ...]) -> frozenset[str]:
         try:
             addr_info = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
         except socket.gaierror:
+            complete = False
             continue
 
-        for _, _, _, _, sockaddr in addr_info:
-            if not sockaddr:
-                continue
-            resolved = _normalize_ip(sockaddr[0])
-            if resolved is not None:
-                resolved_ips.add(resolved)
+        peer_ips = {
+            resolved
+            for _, _, _, _, sockaddr in addr_info
+            if sockaddr and (resolved := _normalize_ip(sockaddr[0])) is not None
+        }
+        if not peer_ips:
+            complete = False
+        resolved_ips.update(peer_ips)
 
-    return frozenset(resolved_ips)
+    return frozenset(resolved_ips), complete
 
 
 def verify_source_ip(request: Request, peer_urls: tuple[str, ...]) -> bool:
