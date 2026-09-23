@@ -129,15 +129,8 @@ Between gossip rounds a node knows only its own count plus the last snapshot it
 received. A client spreading a burst across every node is admitted by each of
 them independently.
 
-Reproduce it:
-
-```bash
-docker compose up -d
-python scripts/load_test.py
-```
-
-A burst of 150 concurrent requests from one identity against a three node
-cluster, limit 30:
+A burst of 150 concurrent requests from one identity, against a three node
+cluster with a limit of 30:
 
 | | Result |
 |---|---|
@@ -194,7 +187,6 @@ app/
   repositories/      in-memory auth and counter storage
   services/          auth, rate limiting, gossip
 frontend/            operator dashboard
-scripts/             load test harness
 tests/               pytest suite
 ```
 
