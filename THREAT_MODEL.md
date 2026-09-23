@@ -129,17 +129,22 @@ and the absent network hop, and this is the price.
 
 ### T4. Credential attacks
 
-**Controls.** bcrypt at cost factor 12 (`app/core/auth.py:13`) makes offline
-cracking expensive. Login errors are identical for an unknown username and a wrong
+**Controls.** bcrypt at cost factor 12 (`app/core/auth.py`) makes offline cracking
+expensive. Login errors are identical for an unknown username and a wrong
 password. `/auth/token` is rate limited at the anonymous tier, ten attempts per
 minute per IP by default.
 
-**Residual risk.** Two real gaps. First, a username enumeration oracle:
-`authenticate_user` short circuits when the user does not exist
-(`app/services/auth_service.py:16`), so bcrypt never runs and the response returns
-measurably faster than for a valid username. Second, the throttle is keyed on
-client IP, so a distributed attempt across many source addresses is not slowed.
-There is no account lockout and no failed attempt logging.
+Both failure paths also cost the same time. A missing account is compared against
+a throwaway hash (`app/services/auth_service.py`), so a lookup miss runs one
+bcrypt comparison exactly as a wrong password does. Before this, a miss returned
+in microseconds while a valid username cost roughly 350 milliseconds. Measured at
+1,416,071x apart, now 1.005x, which is well inside ordinary network noise. That
+gap was wide enough to enumerate valid accounts remotely and then aim a password
+spray at only those.
+
+**Residual risk.** There is no account lockout and no failed attempt logging. The
+throttle is keyed on client IP, so an attempt spread thinly across many source
+addresses is not slowed by it.
 
 ### T5. Token handling
 
@@ -190,16 +195,31 @@ cleartext, and a network observer can map traffic patterns per user.
 **Requirement.** Deploy the gossip mesh on a private network, or terminate TLS
 between peers. The application does not enforce this.
 
-### T9. Proxy deployment breaks client identity
+### T9. Client identity behind a reverse proxy
 
-The rate limiter reads `request.client.host` directly and ignores
-`X-Forwarded-For` (`app/middleware/rate_limit_middleware.py:20`). Behind a load
-balancer or reverse proxy every request appears to come from the proxy.
+When a node sits behind a load balancer the socket address belongs to the proxy,
+not the client, so reading it directly puts every client into one shared bucket
+and a single noisy caller throttles everyone.
 
-**Impact.** Anonymous clients collapse into a single shared bucket, so one noisy
-client throttles everyone, and authenticated clients are keyed on a constant
-prefix. Any real deployment needs a trusted proxy header configuration before this
-control means anything.
+The obvious fix, reading `X-Forwarded-For`, is worse than the problem if applied
+naively. The header is attacker controlled, so a client that sets it freely mints
+a new counter bucket per request and the limiter stops working entirely.
+
+**Controls.** The header is honoured only when the immediate peer is itself a
+configured proxy. `TRUSTED_PROXIES` accepts addresses or CIDR ranges, and
+`resolve_client_ip` (`app/core/client_ip.py`) walks the forwarded chain from right
+to left, discarding trusted hops and returning the first address that is not one.
+Anything a client prepended sits further left and is never reached. An entry that
+fails to parse stops the walk rather than being skipped, so a malformed chain
+falls back to the proxy address instead of trusting whatever follows it.
+
+The setting defaults to empty, meaning the header is ignored and the socket
+address is used. A node is secure before it is configured, and the operator opts
+in once a proxy actually sits in front of it.
+
+**Residual risk.** Correctness depends on the operator listing the right ranges;
+trusting something as broad as `0.0.0.0/0` restores the spoofing problem. Only
+`X-Forwarded-For` is read, so `Forwarded` and `X-Real-IP` are ignored.
 
 ### T10. Stale peer address cache
 
@@ -238,8 +258,8 @@ if nodes restart frequently.
 | Over admission during convergence | Medium | Known, fix identified, not implemented |
 | Single shared gossip secret, no rotation | Medium | Accepted for current scope |
 | Peer clocks must stay within the skew window | Low | New operational requirement |
-| No `X-Forwarded-For` handling | Medium | Blocks correct proxy deployment |
-| Username enumeration by response timing | Low | Not addressed |
+| Trusted proxy ranges must be configured correctly | Low | Handled, opt in via `TRUSTED_PROXIES` |
+| No account lockout or failed attempt logging | Low | Not addressed |
 | No token revocation | Low | Accepted, mitigated by short expiry |
 | Token in `localStorage` | Low | Accepted for a demo dashboard |
 | Unescaped peer URLs in the dashboard | Low | Latent, not currently reachable |
