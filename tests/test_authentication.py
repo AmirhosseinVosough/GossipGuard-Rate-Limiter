@@ -76,3 +76,54 @@ def test_login_failures_are_indistinguishable_to_the_caller() -> None:
 
     assert unknown.status_code == wrong.status_code == 401
     assert unknown.json() == wrong.json()
+
+
+def test_password_check_runs_off_the_event_loop() -> None:
+    """bcrypt costs ~350ms and must not run inline on the event loop.
+
+    Asserted by thread identity rather than by clock, so it cannot flake on a
+    loaded CI runner. If the check ever moves back onto the loop thread, every
+    other request on the node stalls for the duration, and /auth/token is
+    unauthenticated so anyone could trigger it.
+    """
+    import asyncio
+    import threading
+
+    import httpx
+
+    import app.services.auth_service as auth_service_module
+
+    settings = Settings(
+        node_id="test-node",
+        peer_urls=(),
+        gossip_secret_key="test-gossip-secret-key-that-is-long-enough",
+        jwt_secret_key="test-jwt-secret-key-that-is-long-enough",
+        enable_demo_users=True,
+        viewer_password="viewer123",
+        admin_password="admin123",
+    )
+    application = create_app(settings)
+
+    observed: dict[str, threading.Thread] = {}
+    original = auth_service_module.verify_password
+
+    def spy(password: str, hashed_password: str) -> bool:
+        observed["checked_on"] = threading.current_thread()
+        return original(password, hashed_password)
+
+    async def run() -> None:
+        observed["loop_on"] = threading.current_thread()
+        transport = httpx.ASGITransport(app=application)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/auth/token", data={"username": "admin", "password": "admin123"}
+            )
+        assert response.status_code == 200
+
+    with patch.object(auth_service_module, "verify_password", spy):
+        asyncio.run(run())
+
+    assert "checked_on" in observed, "verify_password was never called"
+    assert observed["checked_on"] is not observed["loop_on"], (
+        "bcrypt ran on the event loop thread; it must be offloaded to a worker"
+    )

@@ -142,9 +142,17 @@ in microseconds while a valid username cost roughly 350 milliseconds. Measured a
 gap was wide enough to enumerate valid accounts remotely and then aim a password
 spray at only those.
 
+Because both paths now run bcrypt, the check is also offloaded to a worker
+thread (`app/api/routes/auth.py`). Run inline it would stall the event loop for
+its full duration, so a handful of concurrent attempts on an unauthenticated
+endpoint would make the node unresponsive to everything else. Measured on twenty
+concurrent attempts, worst case latency for an unrelated request fell from 3,386ms
+to 51ms once offloaded.
+
 **Residual risk.** There is no account lockout and no failed attempt logging. The
 throttle is keyed on client IP, so an attempt spread thinly across many source
-addresses is not slowed by it.
+addresses is not slowed by it. bcrypt remains CPU bound, so sustained login
+volume still costs real capacity; the anonymous tier limit is what bounds it.
 
 ### T5. Token handling
 
