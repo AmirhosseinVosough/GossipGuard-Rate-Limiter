@@ -1,6 +1,6 @@
 # GossipGuard
 
-[![CI](https://github.com/RayanVosough/RATE-LIMITING-GOSSIP/actions/workflows/ci.yml/badge.svg)](https://github.com/RayanVosough/RATE-LIMITING-GOSSIP/actions/workflows/ci.yml)
+[![CI](https://github.com/AmirhosseinVosough/GossipGuard-Rate-Limiter/actions/workflows/ci.yml/badge.svg)](https://github.com/AmirhosseinVosough/GossipGuard-Rate-Limiter/actions/workflows/ci.yml)
 
 A distributed rate limiter that enforces per-user limits across a cluster
 without a central store, using conflict-free replicated counters synchronised by
@@ -196,7 +196,7 @@ tests/               pytest suite
 pytest
 ```
 
-36 tests covering the merge rule, permission enforcement, JWT handling,
+40 tests covering the merge rule, permission enforcement, JWT handling,
 signature and replay rejection, proxy header trust, and the login timing
 equalisation. Time-dependent logic takes an injectable clock, so expiry and
 convergence are tested deterministically rather than with sleeps.
