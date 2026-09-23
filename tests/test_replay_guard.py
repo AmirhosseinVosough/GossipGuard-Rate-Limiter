@@ -145,3 +145,40 @@ def test_signature_is_checked_before_the_replay_cache_is_touched() -> None:
 
     assert client.post("/internal/gossip/sync", json=forged).status_code == 403
     assert asyncio.run(app.state.replay_guard.size()) == 0
+
+
+def test_envelope_from_an_unknown_address_is_refused() -> None:
+    """The source address check is the second of two independent layers.
+
+    A correctly signed envelope still has to arrive from a configured peer, so
+    that leaking the shared secret alone is not enough to write counter state.
+    """
+    client = TestClient(create_app(_node()), client=("203.0.113.9", 50000))
+
+    response = client.post("/internal/gossip/sync", json=_envelope(time()))
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Unauthorized node"
+
+
+def test_the_two_checks_are_independent() -> None:
+    good_address = TestClient(create_app(_node()), client=("127.0.0.1", 50000))
+    bad_address = TestClient(create_app(_node()), client=("203.0.113.9", 50000))
+
+    forged = _envelope(time())
+    forged["signature"] = "0" * 64
+
+    # bad signature, good address
+    assert good_address.post("/internal/gossip/sync", json=forged).json()["detail"] == "Invalid signature"
+    # good signature, bad address
+    assert bad_address.post("/internal/gossip/sync", json=_envelope(time())).json()["detail"] == "Unauthorized node"
+
+
+def test_a_refused_envelope_does_not_reach_the_counters() -> None:
+    app = create_app(_node())
+    client = TestClient(app, client=("203.0.113.9", 50000))
+
+    client.post("/internal/gossip/sync", json=_envelope(time()))
+
+    snapshot = asyncio.run(app.state.gossip_service.local_snapshot())
+    assert snapshot == {}
