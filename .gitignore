@@ -37,3 +37,4 @@ node_modules/
 *.log
 
 private.md
+peer-dns-cache-bug.md
