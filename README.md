@@ -217,7 +217,7 @@ tests/               pytest suite
 pytest
 ```
 
-55 tests covering the merge rule, window rollover, permission enforcement, JWT handling,
+59 tests covering the merge rule, window rollover, rate limit keys, permission enforcement, JWT handling,
 signature and replay rejection, proxy header trust, and the login timing
 equalisation. Time-dependent logic takes an injectable clock, so expiry and
 convergence are tested deterministically rather than with sleeps.

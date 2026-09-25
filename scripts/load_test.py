@@ -54,7 +54,7 @@ async def user_totals(client: httpx.AsyncClient, node: str, admin_token: str, us
     if response.status_code != 200:
         sys.exit(f"reading state from {node} failed: {response.status_code} {response.text}")
     snapshot = response.json()["snapshot"]
-    return {key: slots for key, slots in snapshot.items() if key.endswith(f":{user_id}")}
+    return {key: slots for key, slots in snapshot.items() if key == f"user:{user_id}"}
 
 
 def total(slots: dict) -> int:
@@ -161,8 +161,8 @@ def report(args, nodes, views, converged_after, second, admitted) -> int:
         ok = False
         print(f"\nNodes did not agree within {args.converge_timeout}s.")
         if len(keys) > 1:
-            print("They are counting this user under different keys, which means they see the client at "
-                  f"different addresses: {sorted(keys)}. That is separate buckets, not slow convergence.")
+            print(f"Nodes hold more than one key for this user: {sorted(keys)}. "
+                  "That is separate buckets, not slow convergence.")
         for node, v in views.items():
             print(f"  {node}: {({k: total(s) for k, s in v.items()})}")
     else:

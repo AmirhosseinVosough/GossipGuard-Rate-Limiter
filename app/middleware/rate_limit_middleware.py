@@ -30,7 +30,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         user = get_current_user_from_request(request)
 
-        user_key = client_ip if user is None else f"{client_ip}:{user.user_id}"
+        # A logged-in user gets one bucket wherever they connect from, so rotating
+        # IPs cannot multiply their limit. IP is only the fallback for anonymous callers.
+        user_key = f"ip:{client_ip}" if user is None else f"user:{user.user_id}"
         allowed, current_total, limit = await self.service.allow_request(user_key=user_key, user=user)
         if not allowed:
             return JSONResponse(
@@ -39,7 +41,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     "detail": "Rate limit exceeded",
                     "limit": limit,
                     "current_total": current_total,
-                    "user_key": user_key,
                 },
             )
 

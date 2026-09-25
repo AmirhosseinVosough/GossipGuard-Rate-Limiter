@@ -180,9 +180,11 @@ rendered with `textContent` and is safe.
 
 ### T7. Resource exhaustion
 
-Counter keys are derived from the client IP, optionally suffixed with a user ID
-(`app/middleware/rate_limit_middleware.py:24`). An attacker rotating source
-addresses creates a new map entry per address.
+Counter keys are `user:<user_id>` for authenticated requests and `ip:<address>`
+otherwise (`app/middleware/rate_limit_middleware.py:35`). A logged-in user has one
+bucket wherever they connect from, so rotating addresses no longer multiplies
+their limit. Anonymous traffic is still keyed per address, so an attacker rotating
+source addresses without logging in creates a new map entry per address.
 
 **Controls.** Every slot carries an expiry, pruning runs on each access, and a
 janitor sweeps every sixty seconds (`app/services/gossip_service.py:79`). Memory
