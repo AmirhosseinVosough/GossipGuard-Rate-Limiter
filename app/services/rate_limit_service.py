@@ -22,5 +22,5 @@ class RateLimitService:
 
     async def allow_request(self, user_key: str, user: User | None) -> tuple[bool, int, int]:
         limit = self.limit_for(user)
-        current_total = await self.repository.record_hit(user_key)
-        return current_total <= limit, current_total, limit
+        allowed, current_total = await self.repository.try_acquire(user_key, limit)
+        return allowed, current_total, limit

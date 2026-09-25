@@ -43,15 +43,20 @@ already counted. Both are wrong, and this is the lost update problem.
 The solution is that **each node owns its own slot**:
 
 ```text
-{ user_key: { node_id: CounterSlot(count, expires_at, updated_at) } }
+{ user_key: { node_id: CounterSlot(count, window, expires_at, updated_at) } }
 ```
 
 Node A only ever writes `slots["node-a"]`. Node B only ever writes
 `slots["node-b"]`. A user's total is the sum across all slots.
 
-Merging is then conflict free. For each incoming slot, take it if absent, and
-otherwise keep whichever carries the later `updated_at`, breaking ties on the
-higher count. No node can overwrite another's data, because no two nodes ever
+Counts are kept per fixed window, numbered `floor(now / RATE_LIMIT_WINDOW_SECONDS)`.
+Every node's count resets at the same boundary, however steadily a client sends,
+and a slot expires when its window ends. Requests refused with 429 are not
+counted, so a throttled client is let back in as soon as the window rolls over.
+
+Merging is then conflict free. For each incoming slot, take it if absent or from
+a later window, ignore it if from an earlier window, and within the same window
+keep whichever carries the later `updated_at`, breaking ties on the higher count. No node can overwrite another's data, because no two nodes ever
 write the same key. Arrival order stops mattering and duplicate deliveries are
 harmless, which is what a G-Counter CRDT buys you.
 
@@ -123,7 +128,7 @@ so a second node is `NODE_ID=node-b PEER_URLS=... uvicorn app.main:app --port 80
 
 ### Over-admission during convergence
 
-**Measured at 3.00x the configured limit.**
+**Measured at up to 3.00x the configured limit.**
 
 Between gossip rounds a node knows only its own count plus the last snapshot it
 received. A client spreading a burst across every node is admitted by each of
@@ -137,21 +142,29 @@ python scripts/load_test.py
 ```
 
 A burst of 150 concurrent requests from one identity, against a three node
-cluster with a limit of 30:
+cluster with a limit of 30, each run starting in a fresh window:
 
-| | Result |
-|---|---|
-| Admitted | 90 |
-| Refused (429) | 60 |
-| Allowed by policy | 30 |
-| **Over-admission** | **3.00x** |
+| Run | Admitted | Refused (429) | Over-admission |
+|---|---|---|---|
+| 1 | 49 | 101 | 1.63x |
+| 2 | 90 | 60 | **3.00x** |
+| 3 | 68 | 82 | 2.27x |
+| 4 | 90 | 60 | **3.00x** |
 
-Each node admitted its full 30 before learning about the other two. The worst
-case is the limit multiplied by the node count, and the measurement lands exactly
-there.
+In the worst runs each node admitted its full 30 before learning about the other
+two. That is the limit multiplied by the node count, and the measurement lands
+exactly there. Runs come in lower when a gossip round lands mid burst, so the
+result varies, but the bound to plan for is 3.00x.
 
-The system does correct itself. Within about three seconds all nodes agree on the
-total, and a second burst is refused entirely.
+The system does correct itself. Within a third of a second all nodes agree on the
+total, and a follow-up request to every node is refused.
+
+### Bursts at a window boundary
+
+Fixed windows let a client spend a full limit at the end of one window and
+another at the start of the next, so up to twice the limit can land within a few
+seconds. A sliding window, or weighting the previous window's count by how much
+of it still overlaps, would close that gap.
 
 **The fix, not yet implemented:** give each node `limit / node_count` rather than
 the full limit, and gossip unused headroom so a node under heavy load can borrow
@@ -204,7 +217,7 @@ tests/               pytest suite
 pytest
 ```
 
-48 tests covering the merge rule, permission enforcement, JWT handling,
+55 tests covering the merge rule, window rollover, permission enforcement, JWT handling,
 signature and replay rejection, proxy header trust, and the login timing
 equalisation. Time-dependent logic takes an injectable clock, so expiry and
 convergence are tested deterministically rather than with sleeps.

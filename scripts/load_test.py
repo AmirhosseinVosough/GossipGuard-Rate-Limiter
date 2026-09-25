@@ -7,9 +7,10 @@ total. Run against the Compose cluster:
     docker compose up -d
     python scripts/load_test.py
 
-The counters live for RATE_LIMIT_WINDOW_SECONDS after the last hit, so a second
-run within that window starts warm. The script checks for that and refuses to
-measure a dirty window rather than report a wrong number.
+Counters are kept per fixed window of RATE_LIMIT_WINDOW_SECONDS, so a second run
+inside the same window starts warm. The script checks for that and refuses to
+measure a dirty window rather than report a wrong number. It also waits for a
+fresh window when the current one would end mid measurement.
 """
 from __future__ import annotations
 
@@ -34,6 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--admin-username", default="admin")
     parser.add_argument("--admin-password", default="admin123")
     parser.add_argument("--converge-timeout", type=float, default=10.0, help="seconds to wait for nodes to agree")
+    parser.add_argument("--window", type=int, default=60, help="the cluster's RATE_LIMIT_WINDOW_SECONDS")
     return parser.parse_args()
 
 
@@ -105,23 +107,30 @@ async def main() -> int:
                 sys.exit(f"{node} still holds counts for {args.user_id!r} from an earlier run. "
                          f"Try again in {wait}s.")
 
+        # A window boundary during the measurement would reset every counter,
+        # so start at the top of a window when the current one is nearly over.
+        remaining = args.window - time.time() % args.window
+        if remaining < args.converge_timeout + 5:
+            print(f"Waiting {remaining:.0f}s for a fresh rate limit window")
+            await asyncio.sleep(remaining + 0.5)
+
         per_node, limits = await burst(client, nodes, token, args.burst)
         burst_ended = time.monotonic()
+        admitted = sum(c[200] for c in per_node.values())
 
         # Converged means every node holds one counter for this user, and it
-        # adds up to every request sent, refused ones included.
+        # adds up to every admitted request. Refused requests are not counted.
         converged_after = None
         views: dict[str, dict] = {}
         while time.monotonic() - burst_ended < args.converge_timeout:
             views = {node: await user_totals(client, node, admin_token, args.user_id) for node in nodes}
-            if all(len(v) == 1 and total(next(iter(v.values()))) == args.burst for v in views.values()):
+            if all(len(v) == 1 and total(next(iter(v.values()))) == admitted for v in views.values()):
                 converged_after = time.monotonic() - burst_ended
                 break
             await asyncio.sleep(0.25)
 
         second, _ = await burst(client, nodes, token, len(nodes))
 
-    admitted = sum(c[200] for c in per_node.values())
     refused = sum(c[429] for c in per_node.values())
     other = args.burst - admitted - refused
     if len(limits) != 1:
@@ -138,10 +147,10 @@ async def main() -> int:
     if other:
         print(f"\n{other} requests got neither 200 nor 429: {dict(sum(per_node.values(), Counter()))}")
 
-    return report(args, nodes, views, converged_after, second)
+    return report(args, nodes, views, converged_after, second, admitted)
 
 
-def report(args, nodes, views, converged_after, second) -> int:
+def report(args, nodes, views, converged_after, second, admitted) -> int:
     ok = True
     keys = {key for v in views.values() for key in v}
     if not keys:
@@ -157,14 +166,14 @@ def report(args, nodes, views, converged_after, second) -> int:
         for node, v in views.items():
             print(f"  {node}: {({k: total(s) for k, s in v.items()})}")
     else:
-        print(f"\nAll nodes agreed on a total of {args.burst} after {converged_after:.2f}s")
+        print(f"\nAll nodes agreed on a total of {admitted} after {converged_after:.2f}s")
 
     second_admitted = sum(c[200] for c in second.values())
     print(f"Follow-up request to each node: {second_admitted} of {len(nodes)} admitted")
     if second_admitted:
         ok = False
 
-    print(f"\nCounters stay warm for the rate limit window after the last hit; wait that long before rerunning.")
+    print(f"\nCounters stay warm until the current {args.window}s window ends; rerun after that.")
     return 0 if ok else 1
 
 

@@ -64,10 +64,11 @@ into a partition.
 ### T1. Forged gossip messages
 
 An attacker who can POST to `/internal/gossip/sync` writes directly into counter
-state. Raising a victim's count denies them service. Supplying a fresher
-`updated_at` with a low count resets their usage and defeats the limit entirely,
-because the merge takes the newer timestamp as authoritative
-(`app/repositories/rate_limit_repository.py:74`).
+state. Raising a victim's count denies them service. Supplying a later window,
+or a fresher `updated_at` within the same window, with a low count resets their
+usage and defeats the limit entirely, because the merge takes the later window
+and then the newer timestamp as authoritative
+(`app/repositories/rate_limit_repository.py:92`).
 
 **Controls.** HMAC-SHA256 over a canonical, key sorted JSON body, compared with
 `hmac.compare_digest` so verification does not leak position through timing
@@ -85,9 +86,10 @@ it. The signature still verifies, because nothing about the message changed.
 
 **Controls.** Three layers, in the order the route applies them.
 
-The merge rule defeats most replays on its own. A slot is only overwritten when
-the incoming `updated_at` is strictly newer, or equal with a higher count, so a
-stale envelope loses to current state and changes nothing. This falls out of the
+The merge rule defeats most replays on its own. A slot from an earlier window is
+ignored, and within the same window a slot is only overwritten when the incoming
+`updated_at` is strictly newer, or equal with a higher count, so a stale envelope
+loses to current state and changes nothing. This falls out of the
 CRDT design rather than being a deliberate control, but it is the reason replay
 was never critical here.
 
@@ -250,10 +252,12 @@ check remains the real control; this is defence in depth and an availability fix
 
 These look like defects and are not.
 
-- **Throttled requests still increment the counter.** `allow_request` records the
-  hit before comparing it against the limit
-  (`app/services/rate_limit_service.py:25`), so a client that keeps hammering after
-  a 429 extends its own lockout. This is a penalty, not an accounting error.
+- **Throttled requests are not counted.** `try_acquire` checks the limit before
+  incrementing (`app/repositories/rate_limit_repository.py`), so a client refused
+  with 429 is let back in when the window rolls over, however often it retried.
+  Counting refusals would punish retries, but combined with a sliding expiry it
+  locked steady clients out indefinitely, and a limiter should slow clients down,
+  not ban them.
 - **`/internal/` bypasses rate limiting.** Explained above under attack surface.
 - **Secrets have no defaults.** `Settings` raises at construction when either key
   is missing (`app/core/config.py:64`), so the process refuses to start rather
